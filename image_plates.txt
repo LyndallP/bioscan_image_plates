@@ -1,0 +1,9 @@
+# List of BIOSCAN plate IDs to include in the viewer.
+# One plate ID per line. Lines starting with '#' and blank lines are ignored.
+
+NTGC_007
+WREN_038
+WREN_031
+WREN_032
+WREN_033
+WREN_034
