@@ -7,6 +7,7 @@ Plate IDs are read from image_plates.txt (or a file specified via --input).
 Usage:
     python generate_plates.py
     python generate_plates.py --input my_plates.txt --output my_viewer.html
+    python generate_plates.py --investigate investigate_wells.txt
 """
 
 import argparse
@@ -29,7 +30,43 @@ def read_plates(filepath):
     return plates
 
 
-def generate_html(plates):
+def read_investigate_wells(filepath, known_plates):
+    """Parse investigate_wells.txt and return a set of (plate_id, well_id) tuples.
+
+    Each line is matched against known plate IDs. The well ID is the token
+    immediately after the matched plate ID, e.g.:
+        CONTROL_NEG_LYSATE_FACE_362_H12  ->  plate=FACE_362, well=H12
+    Lines that don't match any known plate are skipped with a warning.
+    """
+    flagged = set()
+    if not os.path.exists(filepath):
+        return flagged
+
+    with open(filepath, 'r') as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            matched = False
+            for plate_id in known_plates:
+                marker = f"_{plate_id}_"
+                idx = line.find(marker)
+                if idx != -1:
+                    well_id = line[idx + len(marker):]
+                    well_id = well_id.split('_')[0].strip()
+                    if well_id:
+                        flagged.add((plate_id, well_id))
+                        matched = True
+                        break
+            if not matched:
+                print(f"Warning: no known plate found in investigate line: {line!r}")
+
+    return flagged
+
+
+def generate_html(plates, flagged_wells=None):
+    if flagged_wells is None:
+        flagged_wells = set()
     html = """\
 <!DOCTYPE html>
 <html>
@@ -101,6 +138,28 @@ def generate_html(plates):
             font-size: 10px;
             color: #c62828;
         }
+        .investigate {
+            box-shadow: inset 0 0 0 3px #ff6600;
+            z-index: 1;
+        }
+        .investigate .well-label {
+            background: rgba(255, 102, 0, 0.85);
+            color: white;
+        }
+        .investigate-legend {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: #555;
+        }
+        .investigate-legend-swatch {
+            width: 16px;
+            height: 16px;
+            box-shadow: inset 0 0 0 3px #ff6600;
+            display: inline-block;
+        }
         .row-header, .col-header {
             width: 60px;
             height: 20px;
@@ -124,6 +183,14 @@ def generate_html(plates):
     </style>
 </head>
 <body>
+"""
+
+    if flagged_wells:
+        html += """\
+    <div class="investigate-legend">
+        <span class="investigate-legend-swatch"></span>
+        Wells flagged for investigation
+    </div>
 """
 
     for plate_id in plates:
@@ -158,9 +225,10 @@ def generate_html(plates):
                 well_id = f"{row}{col}"
                 specimen_id = f"{plate_id}_{well_id}"
                 image_url = f"{IMAGE_BASE_URL}/{specimen_id}.jpg"
+                extra_class = " investigate" if (plate_id, well_id) in flagged_wells else ""
 
                 html += f"""\
-                        <div class="well loading" id="{plate_id}_{well_id}">
+                        <div class="well loading{extra_class}" id="{plate_id}_{well_id}">
                             <div class="well-label">{well_id}</div>
                             <img src="{image_url}"
                                  alt="{specimen_id}"
@@ -177,6 +245,12 @@ def generate_html(plates):
     </div>
 """
 
+    if flagged_wells:
+        html += """\
+    <p style="font-size:12px; color:#888; margin-top:10px;">
+        Wells flagged for investigation are shown with an orange border.
+    </p>
+"""
     html += "</body>\n</html>\n"
     return html
 
@@ -193,6 +267,11 @@ def main():
         '--output', default='bioscan_plates.html',
         help="Output HTML file (default: bioscan_plates.html)"
     )
+    parser.add_argument(
+        '--investigate', default='investigate_wells.txt',
+        metavar='FILE',
+        help="Text file of well strings to highlight (default: investigate_wells.txt if present)"
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -206,7 +285,14 @@ def main():
 
     print(f"Loaded {len(plates)} plate(s): {', '.join(plates)}")
 
-    html = generate_html(plates)
+    flagged_wells = read_investigate_wells(args.investigate, plates)
+    if flagged_wells:
+        print(f"Flagged {len(flagged_wells)} well(s) for investigation: "
+              + ", ".join(f"{p}_{w}" for p, w in sorted(flagged_wells)))
+    elif os.path.exists(args.investigate):
+        print(f"No matching wells found in '{args.investigate}'.")
+
+    html = generate_html(plates, flagged_wells)
 
     with open(args.output, 'w') as f:
         f.write(html)
